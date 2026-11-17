@@ -1,0 +1,42 @@
+\documentclass[
+  oneside,
+  degree=bachelor,
+  fullwidthstop=false,
+  fontset=fandol,
+  times=false,
+  minted=false,
+  biblatex=true,
+]{tongjithesis}
+
+\tjbibresource{bib/ref.bib}
+
+\begin{document}
+
+\renewcommand{\tjheadertext}{课程设计报告}
+
+\input{chapters/metadata}
+\MakeCover
+\cleardoublepage
+\tjbindinglinefalse
+
+\frontmatter
+\input{chapters/00_abstract}
+
+\clearpage
+\tableofcontents
+\cleardoublepage
+
+\mainmatter
+\input{chapters/01_intro}
+\input{chapters/02_env}
+\input{chapters/03_theory}
+\input{chapters/04_design}
+\input{chapters/05_experiment}
+\input{chapters/06_conclusion}
+
+\makereferences
+
+\appendix
+\input{chapters/appendix}
+
+\end{document}

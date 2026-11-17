@@ -1,0 +1,65 @@
+\chapter{代码实现与算法流程}\label{chap:design}
+
+\section{项目模块}
+
+基础实验与对照实验代码主要由以下文件组成：
+
+\begin{itemize}
+  \item \texttt{src/model.py}：定义 LeNet5、MobileNetV2 和 SmallCNN。LeNet5 使用具名层，并支持 Dropout 和 FC 层 LoRA；
+  \item \texttt{src/lora.py}：定义 LoRAConv2d、LoRADense 和 LoRADenseFromBase；
+  \item \texttt{src/train\_mnist\_lenet.py}：在 MNIST 上从零训练 LeNet5 并保存预训练权重；
+  \item \texttt{src/train\_lenet\_garbage.py}：完成垃圾分类从零训练、冻结微调、全量微调、LoRA 微调和增强实验；
+  \item \texttt{src/eval\_lenet.py}：加载 LeNet5 checkpoint 并在垃圾分类验证集上评估；
+  \item \texttt{src/plot\_curves.py}：读取 CSV 训练日志并绘制损失和准确率曲线；
+  \item \texttt{src/utils.py}：提供随机种子、显存统计、CSV/JSON 写入和参数统计工具；
+  \item \texttt{scripts/run\_lenet\_experiments.ps1}：一键运行全部 LeNet5 实验。
+\end{itemize}
+
+\section{LeNet5 实现}
+
+为了精确控制层冻结、参数统计和 LoRA 插入，本文将 LeNet5 写成具名层结构：
+
+\begin{lstlisting}[language=Python,numbers=none]
+self.conv1 = nn.Conv2d(1, 6, kernel_size=5, pad_mode="valid")
+self.conv2 = nn.Conv2d(6, 16, kernel_size=5, pad_mode="valid")
+self.fc1 = nn.Dense(16 * 5 * 5, 120)
+self.fc2 = nn.Dense(120, 84)
+self.fc3 = nn.Dense(84, num_classes)
+\end{lstlisting}
+
+当 \texttt{use\_lora=True} 时，\texttt{fc1} 和 \texttt{fc2} 会被 LoRADenseFromBase 包装。原始 Dense 权重作为冻结主分支，LoRA 分支作为可训练低秩更新。
+
+\section{训练模式控制}
+
+垃圾分类脚本通过 \texttt{--mode} 参数控制训练策略：
+
+\begin{lstlisting}[language=bash,numbers=none]
+--mode scratch  # 不加载 MNIST 权重，全部参数训练
+--mode freeze   # 加载 MNIST 权重，只训练 fc3
+--mode full     # 加载 MNIST 权重，全部参数训练
+--mode lora     # 加载 MNIST 权重，训练 fc1/fc2 LoRA 和 fc3
+\end{lstlisting}
+
+冻结策略由参数名控制。冻结微调中仅 \texttt{fc3.weight} 和 \texttt{fc3.bias} 的 \texttt{requires\_grad=True}。LoRA 微调中，名称包含 \texttt{lora\_} 的参数以及 \texttt{fc3} 参数参与训练。
+
+\section{训练日志与结果保存}
+
+每个 epoch 结束后，脚本会向 CSV 写入以下字段：epoch、训练损失、训练准确率、验证准确率、epoch 用时、GPU 显存、可训练参数量、是否启用强增强和 Dropout 值。训练结束后，JSON summary 保存最优准确率、总训练时间、参数量、冻结策略、LoRA 配置和 best checkpoint 路径。
+
+训练曲线由 \texttt{src/plot\_curves.py} 绘制，包括训练损失曲线以及训练/验证准确率曲线。所有曲线保存为 PNG，便于在报告中引用。
+
+\section{一键实验流程}
+
+一键脚本 \texttt{scripts/run\_lenet\_experiments.ps1} 的算法流程如下：
+
+\begin{enumerate}[label=(\arabic*)]
+  \item 训练 LeNet5 + MNIST，保存 \texttt{checkpoints/lenet\_mnist.ckpt}；
+  \item 绘制 MNIST 训练曲线；
+  \item 在垃圾分类上从零训练 LeNet5；
+  \item 加载 MNIST 权重，进行冻结微调；
+  \item 加载 MNIST 权重，进行全量微调；
+  \item 加载 MNIST 权重，进行 LoRA 微调；
+  \item 在全量微调基础上启用强数据增强，完成模型改进实验；
+  \item 为五组垃圾分类实验分别绘制训练曲线；
+  \item 输出所有 JSON summary，便于填入报告表格。
+\end{enumerate}

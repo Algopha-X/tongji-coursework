@@ -1,0 +1,93 @@
+\chapter{关键运行命令}\label{app:commands}
+
+\section{一键运行 LeNet5 实验}
+
+在项目根目录下运行：
+
+\begin{lstlisting}[language=bash,numbers=none]
+powershell -ExecutionPolicy Bypass -File scripts/run_lenet_experiments.ps1
+\end{lstlisting}
+
+该脚本依次运行 MNIST 预训练、垃圾分类从零训练、冻结微调、全量微调、LoRA 微调和强数据增强改进实验，并绘制所有训练曲线。
+
+\section{分步命令}
+
+\begin{lstlisting}[language=bash,numbers=none]
+# MNIST 预训练
+docker compose run --rm mindspore-gpu python src/train_mnist_lenet.py \
+  --run_name lenet_mnist --epochs 5 --batch_size 64 \
+  --image_size 32 --lr 1e-3
+
+# 垃圾分类从零训练
+docker compose run --rm mindspore-gpu python src/train_lenet_garbage.py \
+  --data_dir data/garbage_official --mode scratch \
+  --run_name lenet_garbage_scratch --epochs 24 \
+  --batch_size 32 --image_size 32 --lr 1e-3 --weight_decay 1e-4
+
+# 冻结微调
+docker compose run --rm mindspore-gpu python src/train_lenet_garbage.py \
+  --data_dir data/garbage_official \
+  --pretrained checkpoints/lenet_mnist.ckpt \
+  --mode freeze --run_name lenet_garbage_freeze \
+  --epochs 24 --batch_size 32 --image_size 32 \
+  --lr 1e-3 --weight_decay 1e-4
+
+# 全量微调
+docker compose run --rm mindspore-gpu python src/train_lenet_garbage.py \
+  --data_dir data/garbage_official \
+  --pretrained checkpoints/lenet_mnist.ckpt \
+  --mode full --run_name lenet_garbage_full \
+  --epochs 24 --batch_size 32 --image_size 32 \
+  --lr 1e-3 --weight_decay 1e-4
+
+# LoRA 微调
+docker compose run --rm mindspore-gpu python src/train_lenet_garbage.py \
+  --data_dir data/garbage_official \
+  --pretrained checkpoints/lenet_mnist.ckpt \
+  --mode lora --run_name lenet_garbage_lora \
+  --epochs 24 --batch_size 32 --image_size 32 \
+  --lr 1e-3 --weight_decay 1e-4 --lora_rank 4 --lora_alpha 8
+
+# 强数据增强改进实验
+docker compose run --rm mindspore-gpu python src/train_lenet_garbage.py \
+  --data_dir data/garbage_official \
+  --pretrained checkpoints/lenet_mnist.ckpt \
+  --mode full --run_name lenet_garbage_full_aug \
+  --epochs 24 --batch_size 32 --image_size 32 \
+  --lr 1e-3 --weight_decay 1e-4 --strong_aug
+\end{lstlisting}
+
+\section{评估与曲线绘制}
+
+\begin{lstlisting}[language=bash,numbers=none]
+docker compose run --rm mindspore-gpu python src/eval_lenet.py \
+  --data_dir data/garbage_official \
+  --ckpt checkpoints/best_lenet_garbage_full.ckpt \
+  --num_classes 26 --out results/eval_lenet_garbage_full.json
+
+docker compose run --rm mindspore-gpu python src/plot_curves.py \
+  --log logs/train_lenet_garbage_full.csv \
+  --out results/curve_lenet_garbage_full.png
+\end{lstlisting}
+
+\chapter{MobileNetV2 进阶对照命令示例}
+
+正文第 \ref{chap:experiment} 章已经给出 MobileNetV2 进阶对照实验的核心结果。这里列出对应运行命令，便于复现。
+
+\begin{lstlisting}[language=bash,numbers=none]
+# MindCV MobileNetV2-1.0 full + cosine
+docker compose run --rm mindspore-gpu python src/train_official_mobilenet.py \
+  --data_dir data/garbage_official \
+  --model_name mobilenet_v2_100_224 \
+  --checkpoint_path checkpoints/mindcv_mobilenet_v2_100.ckpt \
+  --mode full --epochs 24 --batch_size 16 --lr 1e-4 \
+  --lr_schedule cosine --min_lr 1e-6 --warmup_epochs 2
+
+# MindCV MobileNetV2-1.0 LoRA
+docker compose run --rm mindspore-gpu python src/train_official_mobilenet.py \
+  --data_dir data/garbage_official \
+  --model_name mobilenet_v2_100_224 \
+  --checkpoint_path checkpoints/mindcv_mobilenet_v2_100.ckpt \
+  --mode lora --epochs 24 --batch_size 16 --lr 1e-3 \
+  --lora_rank 4 --lora_alpha 8 --lora_max_layers 12
+\end{lstlisting}

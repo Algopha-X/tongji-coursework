@@ -1,0 +1,65 @@
+\chapter{模型原理与微调方法}\label{chap:theory}
+
+\section{LeNet5 网络结构}
+
+LeNet5 是早期经典卷积神经网络，由 LeCun 等人在手写数字识别研究中提出\cite{lenet1998}。本文实现的 LeNet5 由两个卷积层、两个池化层和三个全连接层组成，输入为单通道 $32\times32$ 图像。结构如下：
+
+\[
+\text{Conv1}(1,6,5) \rightarrow \text{ReLU} \rightarrow \text{MaxPool}
+\rightarrow \text{Conv2}(6,16,5) \rightarrow \text{ReLU} \rightarrow \text{MaxPool}
+\rightarrow \text{FC1}(400,120) \rightarrow \text{FC2}(120,84) \rightarrow \text{FC3}(84,C)
+\]
+
+其中 $C$ 为类别数，在 MNIST 任务中为 10，在垃圾分类任务中为 26。卷积层负责提取局部边缘与纹理，池化层降低空间分辨率并增强局部不变性，全连接层完成高层特征组合和分类。
+
+\section{MNIST 预训练}
+
+MNIST 预训练阶段使用 10 类手写数字数据训练 LeNet5，得到 \texttt{checkpoints/lenet\_mnist.ckpt}。代码基于 MindSpore 框架实现\cite{mindspore}。该权重包含卷积层和前两个全连接层学到的基础图像特征。迁移到垃圾分类时，最后分类层输出维度从 10 改为 26，因此 \texttt{fc3} 无法直接加载 MNIST 权重，需要重新初始化并训练。
+
+为了兼容旧版本 SequentialCell 保存的 checkpoint，代码中提供了参数名映射，将旧参数名如 \texttt{net.0.weight}、\texttt{net.7.weight} 映射到新具名层 \texttt{conv1.weight}、\texttt{fc1.weight} 等。
+
+\section{冻结微调}
+
+冻结微调加载 MNIST 预训练权重后，冻结 \texttt{conv1}、\texttt{conv2}、\texttt{fc1}、\texttt{fc2}，只训练最后分类层 \texttt{fc3}。该策略的优点是可训练参数量少、显存占用低、训练过程稳定；缺点是模型只能在线性分类头上适配新任务，当源任务和目标任务差异较大时，上限较低。
+
+本实验中，冻结微调的可训练参数为 \texttt{fc3.weight} 和 \texttt{fc3.bias}，共 2210 个参数。
+
+\section{全量微调}
+
+全量微调同样加载 MNIST 预训练权重，但所有层都参与训练。这样模型可以根据垃圾分类数据重新调整低层卷积特征和高层全连接特征，适配能力最强。其代价是可训练参数量、显存和过拟合风险更高。由于 LeNet5 总参数量仅约 6.3 万，本实验中全量微调仍然具有较低计算成本。
+
+\section{LoRA 微调}
+
+LoRA（Low-Rank Adaptation）的核心思想是冻结原始权重 $W$，只学习一个低秩更新\cite{lora2022}：
+
+\[
+W'x = Wx + BAx \cdot \frac{\alpha}{r}
+\]
+
+其中 $A$ 将输入特征降到秩 $r$，$B$ 将低维特征映射回输出维度，$\alpha/r$ 为缩放系数。训练开始时通常将 $B$ 初始化为零，使 LoRA 分支初始输出为零，从而不破坏预训练模型的行为。
+
+本文将 LoRA 加在 LeNet5 的 \texttt{fc1} 和 \texttt{fc2} 上，冻结原始 \texttt{conv1}、\texttt{conv2}、\texttt{fc1}、\texttt{fc2} 主分支，只训练 \texttt{fc1/fc2} 的 LoRA 参数和最后分类层 \texttt{fc3}。需要说明的是，LeNet5 总参数量只有约 6.3 万，本身已经是轻量模型，因此 LoRA 在本实验中的主要价值不是节省工业级大模型的显存和吞吐成本，而是验证在 MindSpore 中手动插入低秩适配器、冻结主干并只训练增量分支的可行性。
+
+\section{模型改进实验}
+
+模型改进实验采用更强数据增强：在全量微调基础上增加随机旋转和随机水平翻转。为保证公平对比，增强实验与全量微调基线保持相同的 epoch、batch size、学习率、权重衰减、输入尺寸和随机种子，仅改变 \texttt{--strong\_aug} 这一项。由于增强实验结果明显下降，后续分析将其作为一次负向消融，并结合预处理可视化检查增强配置是否引入了不合理伪特征。
+
+\section{MobileNetV2 进阶对照模型原理}
+
+课程资料中也以 MobileNetV2 + 垃圾分类作为微调示例。为了进一步比较经典小型 CNN 与现代轻量级 CNN 在垃圾分类上的差异，本文在 LeNet5 实验之外加入 MobileNetV2 进阶对照实验。MobileNetV2 是 Google 提出的轻量级卷积网络\cite{mobilenetv2}，核心结构包括深度可分离卷积、倒残差连接和线性瓶颈。
+
+标准卷积同时在空间维度和通道维度上进行卷积，计算量较大。深度可分离卷积将其拆分为 depthwise convolution 和 pointwise convolution：前者对每个通道独立进行空间卷积，后者使用 $1\times1$ 卷积融合通道信息。这样可以显著减少参数量和计算量。
+
+MobileNetV2 的倒残差模块通常包含三步：
+
+\begin{enumerate}[label=(\arabic*)]
+  \item 使用 $1\times1$ pointwise convolution 扩展通道数；
+  \item 使用 $3\times3$ depthwise convolution 提取空间特征；
+  \item 使用 $1\times1$ pointwise convolution 将通道数压回较低维度，并在瓶颈处保持线性输出。
+\end{enumerate}
+
+倒残差结构与传统残差结构的差别在于：传统残差网络通常先降维、再卷积、最后升维，而 MobileNetV2 先升维到更高通道空间中提取特征，再压缩回低维瓶颈。这样做可以让非线性激活主要发生在高维空间，减少低维瓶颈中信息被 ReLU 截断的风险。线性瓶颈则避免在最后压缩阶段继续使用非线性激活，从而更好地保存类别判别所需的信息。
+
+在垃圾分类任务中，MobileNetV2 的优势主要体现在两方面。其一，RGB 输入和 $224\times224$ 分辨率能保留颜色、材质、反光、纹理和边缘细节，这些信息对塑料、金属、纸张、玻璃、厨余等类别区分非常重要。其二，ImageNet 预训练权重来自大规模自然图像分类任务，已经学习到通用视觉特征，因此在小规模垃圾分类数据集上只需较少样本即可完成迁移。
+
+与 LeNet5 相比，MobileNetV2 使用 RGB 输入和 $224\times224$ 分辨率，能够保留颜色、纹理和局部细节；同时 ImageNet 预训练权重提供了边缘、纹理、形状乃至语义层面的通用视觉特征。因此 MobileNetV2 进阶对照实验主要用于验证更强骨干网络和高质量预训练初始化对垃圾分类准确率上限的影响。

@@ -1,0 +1,312 @@
+\documentclass[UTF8,a4paper,zihao=-4]{ctexbook}
+
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{enumitem}
+\usepackage{float}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{listings}
+
+\renewcommand{\figurename}{图}
+\renewcommand{\tablename}{表}
+
+\lstset{
+    basicstyle=\small\ttfamily,
+    breaklines=true,
+    frame=single,
+    numbers=left,
+    numberstyle=\tiny,
+    showstringspaces=false,
+    language=Python
+}
+
+\begin{document}
+
+\frontmatter
+
+\chapter*{摘要}
+\addcontentsline{toc}{chapter}{摘要}
+
+本课程设计围绕《深度学习模块：手写数字识别与垃圾分类》的要求展开，主线采用 LeNet5 网络。实验首先在 MNIST 手写数字数据集上从零训练 LeNet5，并保存预训练权重；随后将该权重迁移到 26 类垃圾分类数据集，在同一 LeNet5 主干上完成从零训练、冻结微调、全量微调、LoRA 微调和模型改进实验。垃圾分类图片在输入 LeNet5 前统一进行 RGB 转灰度、resize 到 $32 \times 32$、归一化和 HWC 到 CHW 的格式转换。
+
+实验代码基于 MindSpore 实现，包含数据加载、模型定义、预训练权重加载、训练评估、日志记录、曲线绘制和结果汇总等模块。实验结果显示，LeNet5 在 MNIST 上达到 98.60\% 的测试准确率；迁移到垃圾分类任务后，从零训练准确率为 3.85\%，冻结微调为 15.38\%，全量微调为 64.23\%，LoRA 微调为 25.38\%，强数据增强改进实验为 38.85\%。这说明 MNIST 预训练权重可以作为有效初始化，但由于 MNIST 与垃圾分类数据分布差异较大，仅训练最后分类层难以充分适配新任务，全量微调更适合当前数据集。
+
+\vspace{1em}
+\noindent\textbf{关键词：} LeNet5；MNIST；垃圾分类；MindSpore；微调；LoRA
+
+\tableofcontents
+
+\mainmatter
+
+\chapter{实验背景}
+
+LeNet5 是卷积神经网络发展早期的经典模型，最初用于手写数字识别任务。它由卷积层、池化层和全连接层构成，结构清晰、参数量较小，非常适合作为深度学习图像分类的入门案例。MNIST 数据集包含 10 类手写数字，是验证 LeNet5 有效性的经典数据集。
+
+课程实验进一步要求将手写数字识别扩展到 26 类垃圾分类任务。与 MNIST 相比，垃圾分类图片具有真实场景背景复杂、类别数量更多、类间差异细微等特点。如果完全从零训练，模型容易受小数据集规模限制而过拟合；因此实验采用迁移学习思想，先在 MNIST 上训练 LeNet5，再将预训练权重迁移到垃圾分类任务上进行微调。
+
+本报告将 MobileNetV2 相关内容降级为拓展实验说明，正文主线全部围绕 LeNet5 展开，以满足课程 PDF 中“加载在手写数字数据集上训练好的预训练模型，并在垃圾分类数据集上进行微调”的要求。
+
+\chapter{实验环境与数据集}
+
+\section{实验环境}
+
+实验使用 MindSpore 深度学习框架。项目提供 Docker 配置，推荐在 Windows + Docker Desktop + WSL2 + NVIDIA GPU 环境下运行。核心环境命令如下：
+
+\begin{verbatim}
+docker compose build
+docker compose run --rm mindspore-gpu python -c "import mindspore; mindspore.run_check()"
+\end{verbatim}
+
+项目目录通过 Docker volume 挂载到容器 `/workspace`，训练生成的 checkpoint、CSV 日志、JSON summary 和 PNG 曲线都会同步保存到本地项目目录。
+
+\section{MNIST 数据集}
+
+MNIST 包含 60000 张训练图片和 10000 张测试图片，类别为数字 0 到 9。原始图片为 $28 \times 28$ 灰度图。为了适配 LeNet5 的经典输入尺寸，脚本将其 resize 到 $32 \times 32$，再使用 MNIST 均值 0.1307 和标准差 0.3081 进行归一化。
+
+\section{垃圾分类数据集}
+
+垃圾分类数据集包含 26 类生活垃圾图片，采用官方 train/test 划分。当前项目中的数据统计为训练集 2593 张，测试/验证集 260 张。目录结构如下：
+
+\begin{verbatim}
+data/garbage_official/
++-- train/
+|   +-- Banana Peel/
+|   +-- Basketball/
+|   +-- ...
++-- test/
+    +-- Banana Peel/
+    +-- Basketball/
+    +-- ...
+\end{verbatim}
+
+\section{垃圾图片适配 LeNet5}
+
+LeNet5 原始设计面向单通道 $32 \times 32$ 图像，而垃圾分类数据是 RGB 彩色真实图片。因此本项目采用如下适配流程：
+
+\begin{enumerate}[label=(\arabic*)]
+    \item 使用 PIL 读取图片并转换为灰度图；
+    \item 将图片 resize 到 $32 \times 32$；
+    \item 将像素值缩放到 $[0,1]$；
+    \item 使用 MNIST 均值和标准差归一化；
+    \item 将图像从 HWC 格式转换为 MindSpore 常用的 CHW 格式。
+\end{enumerate}
+
+这种处理保证了垃圾分类输入与 MNIST 预训练阶段一致，但也会丢失颜色信息，并压缩掉大量纹理细节。
+
+\chapter{LeNet5 原理与代码实现}
+
+\section{LeNet5 网络结构}
+
+本项目实现的 LeNet5 结构为：
+
+\[
+\text{Conv1}(1,6,5) \rightarrow \text{ReLU} \rightarrow \text{MaxPool}
+\rightarrow \text{Conv2}(6,16,5) \rightarrow \text{ReLU} \rightarrow \text{MaxPool}
+\rightarrow \text{FC1}(400,120) \rightarrow \text{FC2}(120,84) \rightarrow \text{FC3}(84,C)
+\]
+
+其中 $C$ 在 MNIST 中为 10，在垃圾分类中为 26。模型定义位于 \texttt{src/model.py}，并使用具名层 \texttt{conv1}、\texttt{conv2}、\texttt{fc1}、\texttt{fc2}、\texttt{fc3}，便于实现精确冻结和 LoRA 插入。
+
+\section{训练流程}
+
+MNIST 预训练脚本为 \texttt{src/train\_mnist\_lenet.py}。垃圾分类主脚本为 \texttt{src/train\_lenet\_garbage.py}，支持四种模式：
+
+\begin{itemize}
+    \item \texttt{scratch}：不加载预训练权重，LeNet5 在垃圾分类上从零训练；
+    \item \texttt{freeze}：加载 MNIST 权重，冻结 \texttt{conv1}、\texttt{conv2}、\texttt{fc1}、\texttt{fc2}，只训练 \texttt{fc3}；
+    \item \texttt{full}：加载 MNIST 权重，所有层参与训练；
+    \item \texttt{lora}：加载 MNIST 权重，冻结原始主干，在 \texttt{fc1}、\texttt{fc2} 上训练 LoRA 分支，并训练 \texttt{fc3}。
+\end{itemize}
+
+每次训练都会输出：
+
+\begin{itemize}
+    \item \texttt{logs/train\_*.csv}：逐 epoch 训练日志；
+    \item \texttt{results/summary\_*.json}：实验摘要；
+    \item \texttt{checkpoints/best\_*.ckpt}：验证准确率最高的权重；
+    \item \texttt{results/curve\_*.png}：训练曲线。
+\end{itemize}
+
+\chapter{微调策略}
+
+\section{冻结微调}
+
+冻结微调先加载 MNIST 预训练权重，然后冻结 \texttt{conv1}、\texttt{conv2}、\texttt{fc1}、\texttt{fc2}。这些层被视为从手写数字中学到的基础特征提取器，只训练最后分类层 \texttt{fc3}，将 84 维特征映射到 26 类垃圾标签。该策略训练参数最少，训练速度快，但由于 MNIST 与垃圾分类差异很大，冻结主干会限制模型适应新任务的能力。
+
+\section{全量微调}
+
+全量微调同样加载 MNIST 预训练权重，但所有层都参与反向传播。这样低层卷积特征和高层全连接特征都可以根据垃圾分类数据重新调整，适应能力强。代价是训练参数量、训练时间和内存占用更高，并且在小数据集上存在过拟合风险。
+
+\section{LoRA 微调}
+
+LoRA 的思想是在冻结原始权重 $W$ 的基础上，引入低秩可训练更新：
+
+\[
+W' x = W x + B A x \cdot \frac{\alpha}{r}
+\]
+
+其中 $A$ 将输入降到低秩维度 $r$，$B$ 再映射回输出维度，$\alpha/r$ 用于缩放 LoRA 分支。本项目将 LoRA 加在 LeNet5 的 \texttt{fc1} 和 \texttt{fc2} 上，冻结原始 \texttt{conv1}、\texttt{conv2}、\texttt{fc1}、\texttt{fc2} 主干权重，只训练 \texttt{fc1/fc2} 的 LoRA 参数和最后分类层 \texttt{fc3}。它比冻结微调更灵活，又比全量微调需要更新的参数少。
+
+\chapter{实验设计与运行命令}
+
+\section{一键运行}
+
+项目提供一键脚本：
+
+\begin{verbatim}
+.\scripts\run_lenet_experiments.ps1
+\end{verbatim}
+
+该脚本依次完成 MNIST 预训练、垃圾分类从零训练、冻结微调、全量微调、LoRA 微调、强数据增强改进实验，并绘制曲线。
+
+\section{关键命令}
+
+MNIST 预训练：
+
+\begin{verbatim}
+docker compose run --rm mindspore-gpu python src/train_mnist_lenet.py \
+  --run_name lenet_mnist --epochs 5 --batch_size 64 --image_size 32 --lr 1e-3
+\end{verbatim}
+
+垃圾分类冻结微调：
+
+\begin{verbatim}
+docker compose run --rm mindspore-gpu python src/train_lenet_garbage.py \
+  --data_dir data/garbage_official --pretrained checkpoints/lenet_mnist.ckpt \
+  --mode freeze --run_name lenet_garbage_freeze --epochs 24 \
+  --batch_size 32 --image_size 32 --lr 1e-3 --weight_decay 1e-4
+\end{verbatim}
+
+垃圾分类全量微调：
+
+\begin{verbatim}
+docker compose run --rm mindspore-gpu python src/train_lenet_garbage.py \
+  --data_dir data/garbage_official --pretrained checkpoints/lenet_mnist.ckpt \
+  --mode full --run_name lenet_garbage_full --epochs 24 \
+  --batch_size 32 --image_size 32 --lr 1e-3 --weight_decay 1e-4
+\end{verbatim}
+
+垃圾分类 LoRA 微调：
+
+\begin{verbatim}
+docker compose run --rm mindspore-gpu python src/train_lenet_garbage.py \
+  --data_dir data/garbage_official --pretrained checkpoints/lenet_mnist.ckpt \
+  --mode lora --run_name lenet_garbage_lora --epochs 24 \
+  --batch_size 32 --image_size 32 --lr 1e-3 --weight_decay 1e-4 \
+  --lora_rank 4 --lora_alpha 8
+\end{verbatim}
+
+\chapter{实验结果与分析}
+
+\section{MNIST 预训练结果}
+
+已有 MNIST 预训练结果如表 \ref{tab:mnist} 所示。
+
+\begin{table}[H]
+\centering
+\caption{LeNet5 在 MNIST 上的预训练结果}
+\label{tab:mnist}
+\begin{tabular}{lrrrr}
+\toprule
+实验 & 训练样本 & 测试样本 & 可训练参数量 & 最优测试准确率 \\
+\midrule
+LeNet5 + MNIST 从零训练 & 60000 & 10000 & 61684 & 98.60\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+该结果说明 MindSpore 版 LeNet5 能够正确完成 MNIST 手写数字识别任务，并生成可迁移到垃圾分类实验的 \texttt{checkpoints/lenet\_mnist.ckpt}。
+
+\section{垃圾分类微调结果}
+
+完整垃圾分类结果见表 \ref{tab:garbage_existing}。各组实验均使用相同官方 train/test 划分，输入尺寸均为 $32 \times 32$，优化器为 Adam，主要对比训练策略差异。
+
+\begin{table}[H]
+\centering
+\caption{LeNet5 垃圾分类完整结果}
+\label{tab:garbage_existing}
+\begin{tabular}{lrrrrr}
+\toprule
+实验 & 可训练参数量 & 总训练时间 & 峰值显存 & 最优 epoch & 最优验证准确率 \\
+\midrule
+从零训练 & 63044 & 362.80 s & 3698 MB & 1 & 3.85\% \\
+冻结微调 & 2210 & 376.04 s & 3610 MB & 14 & 15.38\% \\
+全量微调 & 63044 & 362.99 s & 3698 MB & 24 & 64.23\% \\
+LoRA 微调 & 5106 & 379.66 s & 3610 MB & 24 & 25.38\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+从零训练在 24 个 epoch 内仅达到 3.85\%，基本接近随机猜测水平，说明在 2593 张训练图片上直接学习 26 类真实物体分类较困难。冻结微调只训练最后分类层，因此可训练参数量仅为 2210，准确率提升到 15.38\%，但仍明显低于全量微调。原因在于 MNIST 是灰度数字，垃圾分类是真实物体图像，两者的纹理、形状和语义差异较大，冻结大部分特征提取层会使模型难以学习新任务的判别特征。
+
+全量微调将所有层都开放训练，虽然参数量增加到 63044，但模型能重新调整卷积层和全连接层，因此验证准确率提升到 64.23\%。LoRA 微调只训练 \texttt{fc1/fc2} 的低秩分支和 \texttt{fc3}，可训练参数量为 5106，准确率达到 25.38\%，高于冻结微调但低于全量微调。这说明 LoRA 能在较少参数下增强适配能力，但在 LeNet5 这种小模型上，其可调容量仍不足以替代全量微调。
+
+\section{曲线引用}
+
+报告中可引用以下曲线：
+
+\begin{itemize}
+    \item \texttt{results/curve\_lenet\_mnist.png}：MNIST 预训练曲线；
+    \item \texttt{results/curve\_lenet\_garbage\_freeze.png}：冻结微调曲线；
+    \item \texttt{results/curve\_lenet\_garbage\_full.png}：全量微调曲线；
+    \item \texttt{results/curve\_lenet\_garbage\_scratch.png}：垃圾分类从零训练曲线；
+    \item \texttt{results/curve\_lenet\_garbage\_lora.png}：LoRA 微调曲线；
+    \item \texttt{results/curve\_lenet\_garbage\_full\_aug.png}：增强改进实验曲线。
+\end{itemize}
+
+\section{模型改进实验}
+
+模型改进实验默认采用更强数据增强：在全量微调基础上增加随机旋转和随机水平翻转，其他超参数保持一致，包括 epoch、batch size、学习率、权重衰减、输入尺寸和随机种子。对比结果如表 \ref{tab:improve} 所示。
+
+\begin{table}[H]
+\centering
+\caption{模型改进实验设计}
+\label{tab:improve}
+\begin{tabular}{llr}
+\toprule
+实验 & 改动 & 最优验证准确率 \\
+\midrule
+基线 & 默认灰度 resize 与归一化 & 64.23\% \\
+改进 & 增加 \texttt{--strong\_aug} & 38.85\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+实验中强数据增强未带来提升，准确率从 64.23\% 降至 38.85\%。原因可能是垃圾图片被压缩为 $32 \times 32$ 灰度图后，可用于分类的纹理和形状细节本来有限；随机旋转和翻转进一步改变了物体姿态，使 LeNet5 更难学习稳定判别特征。因此，改进实验说明增强策略需要结合输入尺寸和模型容量谨慎设计，简单增强不一定带来收益。
+
+\chapter{总结与不足}
+
+本项目完成了以 LeNet5 为主线的 MindSpore 图像分类实验。代码实现了 MNIST 预训练、垃圾分类从零训练、冻结微调、全量微调、LoRA 微调和增强改进实验，并统一保存 CSV 日志、JSON summary、checkpoint 和 PNG 曲线。实验结果表明，LeNet5 在 MNIST 上表现良好，但迁移到垃圾分类时，从零训练和冻结微调效果有限，LoRA 微调有一定提升，全量微调最有效。
+
+实验也暴露出 LeNet5 在垃圾分类任务上的局限：
+
+\begin{enumerate}[label=(\arabic*)]
+    \item RGB 转灰度会丢失颜色信息，而颜色是区分部分垃圾类别的重要线索；
+    \item $32 \times 32$ 输入尺寸过小，真实物体的纹理、边缘和局部结构会被压缩；
+    \item LeNet5 模型容量有限，面对 26 类真实图像分类时表达能力不足；
+    \item MNIST 与垃圾分类数据分布差异大，预训练权重迁移价值有限，冻结微调尤其受限。
+\end{enumerate}
+
+后续可尝试保留颜色信息的三通道 LeNet 变体、适当增大输入分辨率、引入更强正则化、绘制混淆矩阵分析易混类别，或将 MobileNetV2 作为附录拓展实验进行更强模型对比。
+
+\backmatter
+
+\chapter*{参考文献}
+\addcontentsline{toc}{chapter}{参考文献}
+
+\begin{description}[itemsep=4pt]
+\item[{[1]}] LeCun Y, Bottou L, Bengio Y, et al. Gradient-based learning applied to document recognition[J]. Proceedings of the IEEE, 1998, 86(11): 2278--2324.
+\item[{[2]}] Hu E J, Shen Y, Wallis P, et al. LoRA: Low-Rank Adaptation of large language models[C]//International Conference on Learning Representations, 2022.
+\item[{[3]}] Huawei Technologies Co., Ltd. MindSpore: An AI framework. \url{https://www.mindspore.cn}.
+\end{description}
+
+\appendix
+
+\chapter{MobileNetV2 拓展说明}
+
+项目仍保留 \texttt{src/train.py}、\texttt{src/train\_official\_mobilenet.py}、\texttt{src/finetune.py} 等 MobileNetV2 相关代码，可用于附录拓展实验。但根据课程 PDF 和本次修改要求，正文主实验、运行命令和结果分析均以 LeNet5 为主线。
+
+\end{document}

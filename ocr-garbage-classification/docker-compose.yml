@@ -1,0 +1,27 @@
+services:
+  mindspore-gpu:
+    build:
+      context: .
+      args:
+        BASE_IMAGE: ${MINDSPORE_IMAGE:-swr.cn-south-1.myhuaweicloud.com/mindspore/mindspore-gpu-cuda11.6:2.0.0}
+    image: garbage-mindspore-gpu:course
+    container_name: garbage-mindspore-gpu
+    working_dir: /workspace
+    volumes:
+      - ./:/workspace
+    shm_size: "8gb"
+    gpus: all
+    stdin_open: true
+    tty: true
+    environment:
+      DEVICE_TARGET: GPU
+      PYTHONPATH: /workspace
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

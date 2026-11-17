@@ -1,0 +1,36 @@
+\chapter{绪论}\label{chap:intro}
+
+\section{实验背景}
+
+LeNet5 与 MNIST 手写数字识别是深度学习图像分类任务中的经典入门组合。LeNet5 通过卷积层提取局部特征，通过池化降低空间分辨率，再利用全连接层完成分类，完整体现了卷积神经网络的基本思想。由于结构清晰、参数量较小、训练流程容易复现，LeNet5 常被用于帮助初学者理解卷积、非线性激活、池化、反向传播和分类损失等基础概念。
+
+课程实验要求在此基础上扩展到 26 类垃圾分类任务。垃圾分类图片来自真实场景，相比 MNIST 具有背景复杂、类别数量更多、类间差异细微等特点。若直接从零训练，模型容易受数据规模限制而学习困难；因此实验采用迁移学习思想，先在 MNIST 上训练 LeNet5，再将预训练权重迁移到垃圾分类数据集上进行微调。
+
+课程资料中以 MobileNetV2 + 垃圾分类作为微调示例，同时也强调 LeNet5 + MNIST 是深度学习入门的核心案例。因此本文采用由浅入深的实验安排：首先使用 LeNet5 完成 MNIST 预训练和垃圾分类迁移，借助较小网络清晰观察层冻结、全量微调和 LoRA 插入机制；随后使用 MobileNetV2 进行进阶对照，分析 RGB 输入、更高分辨率和 ImageNet 预训练权重对真实垃圾分类任务的提升作用。这样的安排既覆盖课程基础要求，也能够进一步讨论实际分类性能的上限。
+
+\section{实验目的}
+
+本课程设计的目标包括：
+
+\begin{enumerate}[label=(\arabic*)]
+  \item 使用 MindSpore 实现 LeNet5，并在 MNIST 上完成从零训练，保存预训练权重；
+  \item 将 MNIST 预训练权重加载到 26 类垃圾分类任务，完成冻结微调和全量微调；
+  \item 在 LeNet5 的 \texttt{fc1} 和 \texttt{fc2} 上加入 LoRA，完成参数高效微调；
+  \item 设计垃圾分类从零训练实验，作为无预训练对照；
+  \item 设计模型改进实验，在保持超参数一致的前提下仅改变数据增强策略，并比较准确率；
+  \item 记录训练时间、显存占用、可训练参数量和验证准确率，形成可复现实验表格；
+  \item 引入 MobileNetV2 进阶对照实验，分析更强骨干网络和高质量预训练权重对垃圾分类性能的影响。
+\end{enumerate}
+
+\section{本文主要工作}
+
+本文主要完成以下工作：
+
+\begin{enumerate}[label=(\arabic*)]
+  \item 使用 MindSpore 实现 LeNet5，并采用具名层结构，便于精确冻结 \texttt{conv1}、\texttt{conv2}、\texttt{fc1}、\texttt{fc2}，并在 \texttt{fc1}、\texttt{fc2} 上插入 LoRA；
+  \item 实现垃圾分类图片到 LeNet5 输入的适配流程：RGB 转灰度、resize 到 $32\times32$、归一化、HWC 转 CHW；
+  \item 完成 LeNet5 六组实验：MNIST 从零训练、垃圾分类从零训练、冻结微调、全量微调、LoRA 微调和强数据增强改进实验；
+  \item 完成 MobileNetV2 进阶实验，对比自实现模型与 MindCV 官方预训练模型在冻结、全量、LoRA 和学习率调度下的表现；
+  \item 统一保存 CSV 训练日志、JSON 实验摘要、checkpoint 和 PNG 训练曲线；
+  \item 按同济模板组织课程设计报告，并在报告中给出实验原理、代码实现、算法流程和结果分析。
+\end{enumerate}

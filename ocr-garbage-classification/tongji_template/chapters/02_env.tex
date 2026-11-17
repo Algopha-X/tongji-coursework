@@ -1,0 +1,54 @@
+\chapter{实验环境与数据集}\label{chap:env}
+
+\section{实验环境}
+
+实验使用 MindSpore 深度学习框架，项目提供 Docker 配置，推荐在 Windows + Docker Desktop + WSL2 + NVIDIA GPU 环境下运行。容器通过 \texttt{docker compose} 管理，工作目录挂载到容器内的 \texttt{/workspace}，训练生成的 checkpoint、CSV 日志、JSON 摘要和 PNG 曲线会同步保存在本地项目目录。
+
+核心环境验证命令如下：
+
+\begin{lstlisting}[language=bash,numbers=none]
+docker compose build
+docker compose run --rm mindspore-gpu python -c "import mindspore; mindspore.run_check()"
+\end{lstlisting}
+
+如果需要确认 Docker 能够访问 GPU，可使用 NVIDIA CUDA 基础镜像运行 \texttt{nvidia-smi}：
+
+\begin{lstlisting}[language=bash,numbers=none]
+docker run --rm --gpus all nvidia/cuda:12.2.0-base-ubuntu22.04 nvidia-smi
+\end{lstlisting}
+
+\section{MNIST 数据集}
+
+MNIST 数据集包含 60000 张训练图片和 10000 张测试图片，类别为数字 0 到 9。原始图片为 $28\times28$ 单通道灰度图。为了适配 LeNet5 经典输入尺寸，实验将其 resize 到 $32\times32$，再使用 MNIST 均值 0.1307 和标准差 0.3081 归一化。
+
+\section{垃圾分类数据集}
+
+垃圾分类数据集包含 26 类生活垃圾图片，采用官方 train/test 划分。当前项目中训练集 2593 张，测试/验证集 260 张。类别包括 Banana Peel、Basketball、Battery、Broom、Cans、Cardboard、Ceramic Bowl、Dirty Cloth、Disposable Chopsticks、Eggshell、Fluorescent lamp、Glass Bottle、Glassware、Hats、Lighter、Metalware、Newspaper、Old Mirror、Orange Peel、Paint bucket、Paper、Plastic Bottle、Seashell、Tablet capsules、Toothbrush、Vegetable Leaf。
+
+数据目录结构如下：
+
+\begin{lstlisting}[language=bash,numbers=none]
+data/garbage_official/
++-- train/
+|   +-- Banana Peel/
+|   +-- Basketball/
+|   +-- ...
++-- test/
+    +-- Banana Peel/
+    +-- Basketball/
+    +-- ...
+\end{lstlisting}
+
+\section{垃圾图片适配 LeNet5}
+
+LeNet5 原始设计面向 $32\times32$ 单通道图像，而垃圾分类数据是 RGB 彩色真实图片。为了加载 MNIST 预训练权重并保持输入形式一致，本文采用如下预处理：
+
+\begin{enumerate}[label=(\arabic*)]
+  \item 使用 PIL 读取图片并转换为灰度图；
+  \item 将图片 resize 到 $32\times32$；
+  \item 将像素缩放到 $[0,1]$；
+  \item 使用 MNIST 均值和标准差归一化；
+  \item 将图像从 HWC 格式转换为 MindSpore 常用的 CHW 格式。
+\end{enumerate}
+
+该流程使垃圾分类图片能够直接输入 LeNet5，但也带来三个局限：灰度化会丢失颜色信息；$32\times32$ 输入会损失真实物体细节；LeNet5 模型容量较小，对 26 类真实场景分类的表达能力有限。
