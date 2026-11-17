@@ -1,0 +1,40 @@
+name: Import coursework repositories
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Copy public repositories into folders
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/Algopha-X/ocr-garbage-classification.git "$RUNNER_TEMP/ocr"
+          git clone --depth 1 https://github.com/Algopha-X/robot-pathfinding-course-design.git "$RUNNER_TEMP/robot"
+          git clone --depth 1 https://github.com/Algopha-X/TongjiThesis.git "$RUNNER_TEMP/thesis"
+          mkdir -p ocr-garbage-classification robot-pathfinding-course-design TongjiThesis
+          cp -a "$RUNNER_TEMP/ocr/." ocr-garbage-classification/
+          cp -a "$RUNNER_TEMP/robot/." robot-pathfinding-course-design/
+          cp -a "$RUNNER_TEMP/thesis/." TongjiThesis/
+          rm -rf ocr-garbage-classification/.git robot-pathfinding-course-design/.git TongjiThesis/.git
+          cat > README.md <<'EOF'
+          # Tongji University Coursework
+
+          Course projects and supporting materials from my undergraduate studies at Tongji University.
+
+          | Folder | Contents | Original repository |
+          | --- | --- | --- |
+          | [ocr-garbage-classification](ocr-garbage-classification/) | OCR and garbage classification course project | [Source](https://github.com/Algopha-X/ocr-garbage-classification) |
+          | [robot-pathfinding-course-design](robot-pathfinding-course-design/) | Robot obstacle avoidance and pathfinding course design | [Source](https://github.com/Algopha-X/robot-pathfinding-course-design) |
+          | [TongjiThesis](TongjiThesis/) | Tongji LaTeX thesis template fork | [Fork](https://github.com/Algopha-X/TongjiThesis) · [Upstream](https://github.com/TJ-CSCCG/TongjiThesis) |
+
+          Each folder keeps its source files, README, and license where provided. The linked original repositories retain their commit history.
+          EOF
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Import Tongji coursework repositories'
+          git push origin HEAD:main
